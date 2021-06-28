@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	deploypb "github.com/mjm/pi-tools/deploy/proto/deploy"
+	"github.com/mjm/pi-tools/pkg/nomadic/service/nomadicservice"
 	"github.com/urfave/cli/v2"
 	"google.golang.org/grpc"
 
@@ -130,7 +131,7 @@ func main() {
 					for appName, app := range nomadic.Registry() {
 						wg.Add(1)
 
-						go func(app nomadic.Deployable) {
+						go func(appName string, app nomadic.Deployable) {
 							defer wg.Done()
 
 							if err := app.Install(ctx, clients); err != nil {
@@ -138,7 +139,7 @@ func main() {
 								atomic.AddInt32(&errored, 1)
 								return
 							}
-						}(app)
+						}(appName, app)
 					}
 
 					go func() {
@@ -160,6 +161,29 @@ func main() {
 
 					if errored != 0 {
 						return fmt.Errorf("one or more apps failed to install")
+					}
+					return nil
+				},
+			},
+			{
+				Name: "test-server",
+				Action: func(c *cli.Context) error {
+					binaryPath := c.Args().First()
+
+					doneCh := make(chan struct{})
+					eventCh := make(chan *deploypb.ReportEvent)
+					go func() {
+						for evt := range eventCh {
+							log.Println(evt)
+						}
+						close(doneCh)
+					}()
+
+					deployErr := nomadicservice.DeployAll(c.Context, binaryPath, eventCh)
+					<-doneCh
+
+					if deployErr == nil {
+						log.Println("All apps finished deploying successfully")
 					}
 					return nil
 				},

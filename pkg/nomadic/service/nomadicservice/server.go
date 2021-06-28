@@ -34,7 +34,8 @@ func DeployAll(ctx context.Context, binaryPath string, ch chan<- *deploypb.Repor
 	nomadic.RegisterNomadicServer(srv, s)
 	go srv.Serve(lis)
 
-	err = exec.CommandContext(ctx, binaryPath, "--server-socket-path", sockPath).Run()
+	cmd := exec.CommandContext(ctx, binaryPath, "perform-deploy", "--server-socket-path", sockPath)
+	err = cmd.Run()
 	<-doneCh
 	srv.Stop()
 

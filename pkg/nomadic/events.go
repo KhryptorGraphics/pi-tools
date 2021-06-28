@@ -43,10 +43,10 @@ func withDescription(format string, v ...interface{}) EventOption {
 	}
 }
 
-func EventArgsAndOptions(v ...interface{}) (args []interface{}, opts []EventOption) {
+func EventArgsAndOptions(v []interface{}) (args []interface{}, opts []EventOption) {
 	for _, x := range v {
-		if x, ok := x.(EventOption); ok {
-			opts = append(opts, x)
+		if opt, ok := x.(EventOption); ok {
+			opts = append(opts, opt)
 		} else {
 			args = append(args, x)
 		}
