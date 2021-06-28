@@ -22,3 +22,8 @@ path "nomad/creds/deploy" {
 path "consul/creds/deploy" {
   capabilities = ["read"]
 }
+
+# Allow updating Vault policies for apps
+path "sys/policies/acl/*" {
+  capabilities = ["create", "read", "update", "delete", "list", "sudo"]
+}
