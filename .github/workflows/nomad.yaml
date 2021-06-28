@@ -76,7 +76,8 @@ jobs:
               bazel run \
                 --remote_cache=https://storage.googleapis.com/mjm-github-actions-bazel-cache \
                 --google_credentials=$RUNNER_TEMP/credentials.json \
-                --config=ci
+                --config=ci \
+                --platforms @io_bazel_rules_go//go/toolchain:linux_arm64
 
       - name: Build nomadic binary
         run: |
