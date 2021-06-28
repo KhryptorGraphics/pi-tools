@@ -1,4 +1,4 @@
-package nomadic
+package nomadicservice
 
 import (
 	"context"

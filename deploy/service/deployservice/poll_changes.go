@@ -19,7 +19,7 @@ import (
 	"github.com/gregdel/pushover"
 	nomadapi "github.com/hashicorp/nomad/api"
 	deploypb "github.com/mjm/pi-tools/deploy/proto/deploy"
-	"github.com/mjm/pi-tools/pkg/nomadic"
+	"github.com/mjm/pi-tools/pkg/nomadic/service/nomadicservice"
 	"github.com/segmentio/ksuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -326,7 +326,7 @@ func (s *Server) checkForChanges(ctx context.Context) error {
 		close(doneCh)
 	}()
 
-	deployErr := nomadic.DeployAll(ctx, tmpFile.Name(), eventCh)
+	deployErr := nomadicservice.DeployAll(ctx, tmpFile.Name(), eventCh)
 	<-doneCh
 
 	if deployErr == nil {
