@@ -39,7 +39,7 @@ func DeployAll(ctx context.Context, binaryPath string, ch chan<- *deploypb.Repor
 	traceID := sc.TraceID().String()
 	spanID := sc.SpanID().String()
 
-	cmd := exec.CommandContext(ctx, binaryPath, "--trace-id", traceID, "--span-id", spanID, "perform-deploy", "--server-socket-path", sockPath)
+	cmd := exec.CommandContext(ctx, binaryPath, "--trace-id", traceID, "--parent-span-id", spanID, "perform-deploy", "--server-socket-path", sockPath)
 	err = cmd.Run()
 	<-doneCh
 	srv.Stop()
