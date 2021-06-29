@@ -72,7 +72,12 @@ func (c Clients) DeployJobs(ctx context.Context, jobs ...*nomadapi.Job) error {
 	wg.Add(len(jobsToWatch))
 	for _, job := range jobsToWatch {
 		go func(job *nomadapi.Job) {
-			defer wg.Done()
+			// TODO figure out a way to not special-case this
+			if *job.ID == "deploy" {
+				wg.Done()
+			} else {
+				defer wg.Done()
+			}
 
 			if err := c.watchJobDeployment(ctx, job); err != nil {
 				errChan <- err
