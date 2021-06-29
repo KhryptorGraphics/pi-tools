@@ -10,6 +10,9 @@ import (
 	consulapi "github.com/hashicorp/consul/api"
 	nomadapi "github.com/hashicorp/nomad/api"
 	vaultapi "github.com/hashicorp/vault/api"
+	"github.com/mjm/pi-tools/pkg/spanerr"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Clients struct {
@@ -42,6 +45,11 @@ func DefaultClients() (Clients, error) {
 }
 
 func (c Clients) DeployJobs(ctx context.Context, jobs ...*nomadapi.Job) error {
+	ctx, span := tracer.Start(ctx, "DeployJobs",
+		trace.WithAttributes(
+			attribute.Int("deploy.job_count", len(jobs))))
+	defer span.End()
+
 	var jobsToWatch []*nomadapi.Job
 	for _, j := range jobs {
 		job, err := c.submitNomadJob(ctx, j)
@@ -100,10 +108,18 @@ func (c Clients) DeployJobs(ctx context.Context, jobs ...*nomadapi.Job) error {
 }
 
 func (c Clients) submitNomadJob(ctx context.Context, job *nomadapi.Job) (*nomadapi.Job, error) {
+	ctx, span := tracer.Start(ctx, "submitNomadJob",
+		trace.WithAttributes(
+			attribute.String("job.id", *job.ID)))
+	defer span.End()
+
 	planResp, _, err := c.Nomad.Jobs().Plan(job, true, nil)
 	if err != nil {
-		return nil, fmt.Errorf("planning nomad job %s: %w", *job.ID, err)
+		return nil, fmt.Errorf("planning nomad job %s: %w", *job.ID, spanerr.RecordError(ctx, err))
 	}
+
+	span.SetAttributes(
+		attribute.String("plan.diff_type", planResp.Diff.Type))
 
 	if planResp.Diff.Type == "None" {
 		return nil, nil
@@ -111,15 +127,22 @@ func (c Clients) submitNomadJob(ctx context.Context, job *nomadapi.Job) (*nomada
 
 	resp, _, err := c.Nomad.Jobs().Register(job, nil)
 	if err != nil {
-		return nil, fmt.Errorf("submitting nomad job %s: %w", *job.ID, err)
+		return nil, fmt.Errorf("submitting nomad job %s: %w", *job.ID, spanerr.RecordError(ctx, err))
 	}
 
+	span.SetAttributes(attribute.Int64("job.modify_index", int64(resp.JobModifyIndex)))
 	job.JobModifyIndex = &resp.JobModifyIndex
+
 	Events(ctx).Info("Submitted job %s", *job.ID)
 	return job, nil
 }
 
 func (c Clients) watchJobDeployment(ctx context.Context, job *nomadapi.Job) error {
+	ctx, span := tracer.Start(ctx, "watchJobDeployment",
+		trace.WithAttributes(
+			attribute.String("job.id", *job.ID)))
+	defer span.End()
+
 	events := Events(ctx)
 
 	var prevDeploy *nomadapi.Deployment
@@ -132,19 +155,37 @@ func (c Clients) watchJobDeployment(ctx context.Context, job *nomadapi.Job) erro
 		}
 		d, wm, err := c.Nomad.Jobs().LatestDeployment(*job.ID, q)
 		if err != nil {
-			return fmt.Errorf("watching %s: %w", *job.ID, err)
+			return fmt.Errorf("watching %s: %w", *job.ID, spanerr.RecordError(ctx, err))
 		}
 
 		if d == nil {
+			span.SetAttributes(attribute.Bool("job.has_deployments", false))
+			span.AddEvent("deploy_update",
+				trace.WithAttributes(
+					attribute.String("deployment.status", "successful")))
 			return nil
 		}
 
 		if d.JobSpecModifyIndex < *job.JobModifyIndex {
+			span.AddEvent("wait_for_deployment",
+				trace.WithAttributes(
+					attribute.Int64("job.modify_index", int64(*job.JobModifyIndex)),
+					attribute.Int64("deployment.job_modify_index", int64(d.JobSpecModifyIndex))))
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
+		if prevDeploy == nil {
+			span.SetAttributes(attribute.Bool("job.has_deployments", true))
+		}
+
 		nomadIndex = wm.LastIndex
+		if prevDeploy == nil || prevDeploy.StatusDescription != d.StatusDescription {
+			span.AddEvent("deploy_update",
+				trace.WithAttributes(
+					attribute.String("deployment.status", d.Status),
+					attribute.String("deployment.status_description", d.StatusDescription)))
+		}
 
 		for name, tg := range d.TaskGroups {
 			// Skip output if it's the same as the last time
@@ -157,6 +198,14 @@ func (c Clients) watchJobDeployment(ctx context.Context, job *nomadapi.Job) erro
 					continue
 				}
 			}
+
+			span.AddEvent("task_group_update",
+				trace.WithAttributes(
+					attribute.String("task_group.name", name),
+					attribute.Int("task_group.placed_allocs", tg.PlacedAllocs),
+					attribute.Int("task_group.desired_total", tg.DesiredTotal),
+					attribute.Int("task_group.healthy_allocs", tg.HealthyAllocs),
+					attribute.Int("task_group.unhealthy_allocs", tg.UnhealthyAllocs)))
 
 			events.Info("%s/%s: Placed %d, Desired %d, Healthy %d, Unhealthy %d",
 				*job.ID, name, tg.PlacedAllocs, tg.DesiredTotal, tg.HealthyAllocs, tg.UnhealthyAllocs)
@@ -174,9 +223,10 @@ func (c Clients) watchJobDeployment(ctx context.Context, job *nomadapi.Job) erro
 			return nil
 		case "failed":
 			events.Error("%s: %s", *job.ID, d.StatusDescription)
-			return fmt.Errorf("%s: deployment failed: %s", *job.ID, d.StatusDescription)
+			err := fmt.Errorf("%s: deployment failed: %s", *job.ID, d.StatusDescription)
+			return spanerr.RecordError(ctx, err)
 		default:
-			return fmt.Errorf("%s: unexpected deployment status %q", *job.ID, d.Status)
+			return spanerr.RecordError(ctx, fmt.Errorf("%s: unexpected deployment status %q", *job.ID, d.Status))
 		}
 	}
 }

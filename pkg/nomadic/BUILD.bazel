@@ -35,6 +35,7 @@ go_library(
         "metrics.go",
         "ptr_wrappers.go",
         "registry.go",
+        "trace.go",
     ],
     embedsrcs = [
         ":digests",  # keep
@@ -44,9 +45,13 @@ go_library(
     deps = [
         "//deploy/proto/deploy",
         "//deploy/report",
+        "//pkg/spanerr",
         "@com_github_hashicorp_consul_api//:api",
         "@com_github_hashicorp_nomad_api//:api",
         "@com_github_hashicorp_vault_api//:api",
+        "@io_opentelemetry_go_otel//:otel",
+        "@io_opentelemetry_go_otel//attribute",
+        "@io_opentelemetry_go_otel_trace//:trace",
         "@org_golang_google_protobuf//types/known/timestamppb",
     ],
 )

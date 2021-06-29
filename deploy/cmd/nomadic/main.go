@@ -11,7 +11,17 @@ import (
 
 	deploypb "github.com/mjm/pi-tools/deploy/proto/deploy"
 	"github.com/mjm/pi-tools/pkg/nomadic/service/nomadicservice"
+	"github.com/mjm/pi-tools/pkg/spanerr"
 	"github.com/urfave/cli/v2"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpgrpc"
+	"go.opentelemetry.io/otel/exporters/stdout"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/semconv"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 
 	"github.com/mjm/pi-tools/apps"
@@ -19,7 +29,11 @@ import (
 	nomadicpb "github.com/mjm/pi-tools/pkg/nomadic/proto/nomadic"
 )
 
+var tracer = otel.Tracer("github.com/mjm/pi-tools/deploy/cmd/nomadic")
+
 func main() {
+	var tp *sdktrace.TracerProvider
+
 	app := &cli.App{
 		Name: "nomadic",
 		Authors: []*cli.Author{
@@ -27,6 +41,88 @@ func main() {
 				Name:  "Matt Moriarity",
 				Email: "matt@mattmoriarity.com",
 			},
+		},
+		Flags: []cli.Flag{
+			&cli.BoolFlag{
+				Name: "debug-tracing",
+			},
+			&cli.StringFlag{
+				Name: "trace-id",
+			},
+			&cli.StringFlag{
+				Name: "parent-span-id",
+			},
+		},
+		Before: func(c *cli.Context) error {
+			traceIDStr := c.String("trace-id")
+			parentSpanIDStr := c.String("parent-span-id")
+			if traceIDStr == "" || parentSpanIDStr == "" {
+				return nil
+			}
+
+			traceID, err := trace.TraceIDFromHex(traceIDStr)
+			if err != nil {
+				return err
+			}
+			parentSpanID, err := trace.SpanIDFromHex(parentSpanIDStr)
+			if err != nil {
+				return err
+			}
+
+			sc := trace.NewSpanContext(trace.SpanContextConfig{
+				TraceID:    traceID,
+				SpanID:     parentSpanID,
+				TraceFlags: trace.FlagsSampled,
+			})
+			c.Context = trace.ContextWithRemoteSpanContext(c.Context, sc)
+
+			if c.Bool("debug-tracing") {
+				log.Printf("Setting up stdout exporter")
+				exporter, err := stdout.NewExporter()
+				if err != nil {
+					return fmt.Errorf("creating stdout exporter: %w", err)
+				}
+
+				tp = sdktrace.NewTracerProvider(
+					sdktrace.WithBatcher(exporter))
+				otel.SetTracerProvider(tp)
+			} else {
+				hostIP := os.Getenv("HOST_IP")
+				exporter, err := otlp.NewExporter(context.Background(),
+					otlpgrpc.NewDriver(
+						otlpgrpc.WithInsecure(),
+						otlpgrpc.WithEndpoint(fmt.Sprintf("%s:%d", hostIP, otlp.DefaultCollectorPort))))
+				if err != nil {
+					return fmt.Errorf("creating otlp exporter: %w", err)
+				}
+
+				r, err := resource.New(context.Background(), resource.WithAttributes(
+					semconv.ServiceNamespaceKey.String(os.Getenv("NOMAD_NAMESPACE")),
+					semconv.ServiceNameKey.String("nomadic"),
+					semconv.ServiceInstanceIDKey.String(os.Getenv("NOMAD_ALLOC_ID")),
+
+					semconv.ContainerNameKey.String(os.Getenv("NOMAD_TASK_NAME")),
+
+					semconv.HostNameKey.String(os.Getenv("HOSTNAME")),
+					semconv.HostIDKey.String(os.Getenv("NOMAD_CLIENT_ID"))))
+				if err != nil {
+					return fmt.Errorf("creating telemetry resource: %w", err)
+				}
+
+				tp = sdktrace.NewTracerProvider(
+					sdktrace.WithBatcher(exporter),
+					sdktrace.WithResource(r))
+				otel.SetTracerProvider(tp)
+			}
+
+			return nil
+		},
+		After: func(c *cli.Context) error {
+			if tp != nil {
+				log.Printf("Shutting down exporter")
+				return tp.Shutdown(context.Background())
+			}
+			return nil
 		},
 		Commands: []*cli.Command{
 			{
@@ -52,7 +148,14 @@ func main() {
 					}
 
 					log.Printf("Installing %s", appName)
-					if err := app.Install(c.Context, clients); err != nil {
+
+					//tracer := otel.Tracer("github.com/mjm/pi-tools/deploy/cmd/nomadic")
+					ctx, span := tracer.Start(c.Context, "install",
+						trace.WithAttributes(
+							attribute.String("app.name", app.Name())))
+					defer span.End()
+
+					if err := app.Install(ctx, clients); err != nil {
 						return err
 					}
 
@@ -103,27 +206,32 @@ func main() {
 					},
 				},
 				Action: func(c *cli.Context) error {
+					serverSocketPath := c.Path("server-socket-path")
+					ctx, span := tracer.Start(c.Context, "perform-deploy",
+						trace.WithAttributes(
+							attribute.String("server.socket_path", serverSocketPath)))
+					defer span.End()
+
 					eventCh := make(chan *deploypb.ReportEvent, 10)
-					ctx := nomadic.WithEvents(c.Context, nomadic.NewChannelEventReporter(eventCh))
+					ctx = nomadic.WithEvents(ctx, nomadic.NewChannelEventReporter(eventCh))
 					doneCh := make(chan struct{})
 
 					clients, err := nomadic.DefaultClients()
 					if err != nil {
-						return err
+						return spanerr.RecordError(ctx, err)
 					}
 
-					serverSocketPath := c.Path("server-socket-path")
 					conn, err := grpc.DialContext(ctx, "unix://"+serverSocketPath,
 						grpc.WithInsecure(),
 						grpc.WithBlock())
 					if err != nil {
-						return err
+						return spanerr.RecordError(ctx, err)
 					}
 
 					client := nomadicpb.NewNomadicClient(conn)
 					stream, err := client.StreamEvents(c.Context)
 					if err != nil {
-						return err
+						return spanerr.RecordError(ctx, err)
 					}
 
 					var wg sync.WaitGroup
@@ -134,7 +242,13 @@ func main() {
 						go func(appName string, app nomadic.Deployable) {
 							defer wg.Done()
 
+							ctx, span := tracer.Start(ctx, "Deployable.Install",
+								trace.WithAttributes(
+									attribute.String("app.name", app.Name())))
+							defer span.End()
+
 							if err := app.Install(ctx, clients); err != nil {
+								_ = spanerr.RecordError(ctx, err)
 								nomadic.Events(ctx).Error("App %s failed to install", appName, nomadic.WithError(err))
 								atomic.AddInt32(&errored, 1)
 								return
@@ -156,11 +270,12 @@ func main() {
 					<-doneCh
 
 					if _, err := stream.CloseAndRecv(); err != nil {
-						return err
+						return spanerr.RecordError(ctx, err)
 					}
 
 					if errored != 0 {
-						return fmt.Errorf("one or more apps failed to install")
+						err := fmt.Errorf("one or more apps failed to install")
+						return spanerr.RecordError(ctx, err)
 					}
 					return nil
 				},

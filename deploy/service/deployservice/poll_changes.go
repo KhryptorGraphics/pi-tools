@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,15 +16,12 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/google/go-github/v33/github"
 	"github.com/gregdel/pushover"
-	nomadapi "github.com/hashicorp/nomad/api"
 	deploypb "github.com/mjm/pi-tools/deploy/proto/deploy"
+	"github.com/mjm/pi-tools/deploy/report"
 	"github.com/mjm/pi-tools/pkg/nomadic/service/nomadicservice"
+	"github.com/mjm/pi-tools/pkg/spanerr"
 	"github.com/segmentio/ksuid"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
-
-	"github.com/mjm/pi-tools/deploy/report"
-	"github.com/mjm/pi-tools/pkg/spanerr"
 )
 
 var errSkipped = errors.New("skipped deploy because current version was already deployed successfully")
@@ -335,152 +331,4 @@ func (s *Server) checkForChanges(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-func (s *Server) submitNomadJob(ctx context.Context, r *report.Recorder, file *zip.File) (*nomadapi.Job, error) {
-	ctx, span := tracer.Start(ctx, "Server.submitNomadJob",
-		trace.WithAttributes(
-			attribute.String("job.filename", file.Name),
-			attribute.Int64("job.size", int64(file.UncompressedSize64))))
-	defer span.End()
-
-	f, err := file.Open()
-	if err != nil {
-		r.Error("Could not read job contents for %q", file.Name).WithError(err)
-		return nil, spanerr.RecordError(ctx, err)
-	}
-	defer f.Close()
-
-	// first, parse the JSON into a job
-	var job nomadapi.Job
-	if err := json.NewDecoder(f).Decode(&job); err != nil {
-		r.Error("Could not decode job contents for %q", file.Name).WithError(err)
-		return nil, spanerr.RecordError(ctx, err)
-	}
-
-	span.SetAttributes(
-		attribute.String("job.id", *job.ID),
-		attribute.String("job.name", *job.Name))
-
-	planResp, _, err := s.NomadClient.Jobs().Plan(&job, true, nil)
-	if err != nil {
-		r.Error("Could not plan job %q", *job.Name).WithError(err)
-		return nil, spanerr.RecordError(ctx, err)
-	}
-
-	span.SetAttributes(
-		attribute.String("plan.diff_type", planResp.Diff.Type))
-
-	if planResp.Diff.Type == "None" {
-		return nil, nil
-	}
-
-	if s.Config.DryRun {
-		r.Info("Skipped submitting job %q because this is a dry-run", *job.Name)
-		return &job, nil
-	}
-
-	resp, _, err := s.NomadClient.Jobs().Register(&job, nil)
-	if err != nil {
-		r.Error("Could not submit job %q", *job.Name).WithError(err)
-		return nil, spanerr.RecordError(ctx, err)
-	}
-
-	span.SetAttributes(attribute.Int64("job.modify_index", int64(resp.JobModifyIndex)))
-	job.JobModifyIndex = &resp.JobModifyIndex
-
-	r.Info("Submitted job %q", *job.Name)
-	return &job, nil
-}
-
-func (s *Server) watchJobDeployment(ctx context.Context, r *report.Recorder, job *nomadapi.Job) error {
-	ctx, span := tracer.Start(ctx, "Server.watchJobDeployment",
-		trace.WithAttributes(
-			attribute.String("job.id", *job.ID)))
-	defer span.End()
-
-	var prevDeploy *nomadapi.Deployment
-	var nomadIndex uint64
-	for {
-		q := &nomadapi.QueryOptions{}
-		if nomadIndex > 0 {
-			q.WaitIndex = nomadIndex
-			q.WaitTime = 30 * time.Second
-		}
-		d, wm, err := s.NomadClient.Jobs().LatestDeployment(*job.ID, q)
-		if err != nil {
-			return spanerr.RecordError(ctx, err)
-		}
-
-		if d == nil {
-			span.SetAttributes(attribute.Bool("job.has_deployments", false))
-			span.AddEvent("deploy_update",
-				trace.WithAttributes(
-					attribute.String("deployment.status", "successful")))
-			return nil
-		}
-
-		if d.JobSpecModifyIndex < *job.JobModifyIndex {
-			span.AddEvent("wait_for_deployment",
-				trace.WithAttributes(
-					attribute.Int64("job.modify_index", int64(*job.JobModifyIndex)),
-					attribute.Int64("deployment.job_modify_index", int64(d.JobSpecModifyIndex))))
-			time.Sleep(5 * time.Second)
-			continue
-		}
-
-		if prevDeploy == nil {
-			span.SetAttributes(attribute.Bool("job.has_deployments", true))
-		}
-
-		nomadIndex = wm.LastIndex
-		if prevDeploy == nil || prevDeploy.StatusDescription != d.StatusDescription {
-			span.AddEvent("deploy_update",
-				trace.WithAttributes(
-					attribute.String("deployment.status", d.Status),
-					attribute.String("deployment.status_description", d.StatusDescription)))
-		}
-
-		for name, tg := range d.TaskGroups {
-			// Skip output if it's the same as the last time
-			if prevDeploy != nil {
-				prevTG := prevDeploy.TaskGroups[name]
-				if prevTG.PlacedAllocs == tg.PlacedAllocs &&
-					prevTG.DesiredTotal == tg.DesiredTotal &&
-					prevTG.HealthyAllocs == tg.HealthyAllocs &&
-					prevTG.UnhealthyAllocs == tg.UnhealthyAllocs {
-					continue
-				}
-			}
-
-			span.AddEvent("task_group_update",
-				trace.WithAttributes(
-					attribute.String("task_group.name", name),
-					attribute.Int("task_group.placed_allocs", tg.PlacedAllocs),
-					attribute.Int("task_group.desired_total", tg.DesiredTotal),
-					attribute.Int("task_group.healthy_allocs", tg.HealthyAllocs),
-					attribute.Int("task_group.unhealthy_allocs", tg.UnhealthyAllocs)))
-
-			r.Info("%s/%s: Placed %d, Desired %d, Healthy %d, Unhealthy %d",
-				*job.Name, name, tg.PlacedAllocs, tg.DesiredTotal, tg.HealthyAllocs, tg.UnhealthyAllocs)
-		}
-
-		switch d.Status {
-		case "running":
-			if prevDeploy == nil || prevDeploy.StatusDescription != d.StatusDescription {
-				r.Info("%s: %s", *job.Name, d.StatusDescription)
-			}
-			prevDeploy = d
-			continue
-		case "successful":
-			r.Info("%s: %s", *job.Name, d.StatusDescription)
-			return nil
-		case "failed":
-			r.Error("%s: %s", *job.Name, d.StatusDescription)
-			err := fmt.Errorf("%s: deployment failed: %s", *job.Name, d.StatusDescription)
-			return spanerr.RecordError(ctx, err)
-		default:
-			return spanerr.RecordError(ctx, fmt.Errorf("%s: unexpected deployment status %q", *job.Name, d.Status))
-		}
-	}
 }

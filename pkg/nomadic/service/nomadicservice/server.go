@@ -10,6 +10,7 @@ import (
 
 	deploypb "github.com/mjm/pi-tools/deploy/proto/deploy"
 	"github.com/mjm/pi-tools/pkg/nomadic/proto/nomadic"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 )
 
@@ -34,7 +35,11 @@ func DeployAll(ctx context.Context, binaryPath string, ch chan<- *deploypb.Repor
 	nomadic.RegisterNomadicServer(srv, s)
 	go srv.Serve(lis)
 
-	cmd := exec.CommandContext(ctx, binaryPath, "perform-deploy", "--server-socket-path", sockPath)
+	sc := trace.SpanContextFromContext(ctx)
+	traceID := sc.TraceID().String()
+	spanID := sc.SpanID().String()
+
+	cmd := exec.CommandContext(ctx, binaryPath, "--trace-id", traceID, "--span-id", spanID, "perform-deploy", "--server-socket-path", sockPath)
 	err = cmd.Run()
 	<-doneCh
 	srv.Stop()

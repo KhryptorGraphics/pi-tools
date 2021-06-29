@@ -2695,8 +2695,8 @@ go_repository(
 go_repository(
     name = "io_opentelemetry_go_otel_exporters_stdout",
     importpath = "go.opentelemetry.io/otel/exporters/stdout",
-    sum = "h1:A+XiGIPQbGoJoBOJfKAKnZyiUSjSWvL3XWETUvtom5k=",
-    version = "v0.13.0",
+    sum = "h1:6+QJvepCJ/YS3rOlsnjhVo527ohlPowOBgsZThR9Hoc=",
+    version = "v0.19.0",
 )
 
 go_repository(

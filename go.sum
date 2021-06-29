@@ -1429,6 +1429,8 @@ go.opentelemetry.io/otel/exporters/metric/prometheus v0.19.0 h1:DMHfiNaNzn0z/uG2
 go.opentelemetry.io/otel/exporters/metric/prometheus v0.19.0/go.mod h1:KYG5VQKfVqxNOwnECGgAPz8YK8UzEiYj9WAK/ded930=
 go.opentelemetry.io/otel/exporters/otlp v0.19.0 h1:ez8agFGbFJJgBU9H3lfX0rxWhZlXqurgZKL4aDcOdqY=
 go.opentelemetry.io/otel/exporters/otlp v0.19.0/go.mod h1:MY1xDqVxZmOlEYbMxUHLbg0uKlnmg4XSC6Qvh6XmPZk=
+go.opentelemetry.io/otel/exporters/stdout v0.19.0 h1:6+QJvepCJ/YS3rOlsnjhVo527ohlPowOBgsZThR9Hoc=
+go.opentelemetry.io/otel/exporters/stdout v0.19.0/go.mod h1:UI2JnNRaSt9ChIHkk4+uqieH27qKt9isV9e2qRorCtg=
 go.opentelemetry.io/otel/metric v0.19.0 h1:dtZ1Ju44gkJkYvo+3qGqVXmf88tc+a42edOywypengg=
 go.opentelemetry.io/otel/metric v0.19.0/go.mod h1:8f9fglJPRnXuskQmKpnad31lcLJ2VmNNqIsx/uIwBSc=
 go.opentelemetry.io/otel/oteltest v0.19.0 h1:YVfA0ByROYqTwOxqHVZYZExzEpfZor+MU1rU+ip2v9Q=

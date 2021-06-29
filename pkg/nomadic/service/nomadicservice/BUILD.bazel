@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//deploy/proto/deploy",
         "//pkg/nomadic/proto/nomadic",
+        "@io_opentelemetry_go_otel_trace//:trace",
         "@org_golang_google_grpc//:go_default_library",
     ],
 )
