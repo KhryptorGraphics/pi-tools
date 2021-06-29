@@ -10,6 +10,7 @@ go_library(
         "//apps/blackboxexporter",
         "//apps/blocky",
         "//apps/consulexporter",
+        "//apps/deploy",
         "//apps/grafana",
         "//apps/homebase",
         "//apps/ingress",

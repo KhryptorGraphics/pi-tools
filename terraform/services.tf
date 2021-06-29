@@ -9,50 +9,6 @@ resource "consul_config_entry" "global_proxy_defaults" {
   })
 }
 
-resource "consul_config_entry" "deploy_grpc_defaults" {
-  kind = "service-defaults"
-  name = "deploy-grpc"
-
-  config_json = jsonencode({
-    Protocol = "grpc"
-  })
-}
-
-resource "consul_config_entry" "deploy_grpc_intentions" {
-  kind = "service-intentions"
-  name = "deploy-grpc"
-
-  config_json = jsonencode({
-    Sources = [
-      {
-        Name        = "homebase-api"
-        Precedence  = 9
-        Type        = "consul"
-        Permissions = [
-          {
-            Action = "allow"
-            HTTP   = {
-              PathPrefix = "/DeployService/"
-            }
-          },
-          {
-            Action = "deny"
-            HTTP   = {
-              PathPrefix = "/"
-            }
-          },
-        ]
-      },
-      {
-        Action     = "deny"
-        Name       = "*"
-        Precedence = 8
-        Type       = "consul"
-      },
-    ]
-  })
-}
-
 resource "consul_config_entry" "go_links_grpc_defaults" {
   kind = "service-defaults"
   name = "go-links-grpc"

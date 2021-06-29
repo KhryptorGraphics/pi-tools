@@ -198,11 +198,6 @@ resource "vault_policy" "consul_template" {
   policy = file("${local.vault_policies_path}/consul-template.hcl")
 }
 
-resource "vault_policy" "deploy" {
-  name   = "deploy"
-  policy = file("${local.vault_policies_path}/deploy.hcl")
-}
-
 resource "vault_policy" "go_links" {
   name   = "go-links"
   policy = file("${local.vault_policies_path}/go-links.hcl")

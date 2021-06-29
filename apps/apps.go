@@ -5,6 +5,7 @@ import (
 	"github.com/mjm/pi-tools/apps/blackboxexporter"
 	"github.com/mjm/pi-tools/apps/blocky"
 	"github.com/mjm/pi-tools/apps/consulexporter"
+	"github.com/mjm/pi-tools/apps/deploy"
 	"github.com/mjm/pi-tools/apps/grafana"
 	"github.com/mjm/pi-tools/apps/homebase"
 	"github.com/mjm/pi-tools/apps/ingress"
@@ -21,6 +22,7 @@ func Load() {
 	nomadic.Register(blackboxexporter.New("blackbox-exporter"))
 	nomadic.Register(blocky.New("blocky"))
 	nomadic.Register(consulexporter.New("consul-exporter"))
+	nomadic.Register(deploy.New("deploy"))
 	nomadic.Register(grafana.New("grafana"))
 	nomadic.Register(homebase.New("homebase"))
 	nomadic.Register(ingress.New("ingress"))
