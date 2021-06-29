@@ -18,6 +18,7 @@ go_library(
         "//apps/otel",
         "//apps/presence",
         "//apps/promtail",
+        "//apps/trippliteexporter",
         "//apps/unifiexporter",
         "//pkg/nomadic",
     ],

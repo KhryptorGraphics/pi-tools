@@ -13,6 +13,7 @@ import (
 	"github.com/mjm/pi-tools/apps/otel"
 	"github.com/mjm/pi-tools/apps/presence"
 	"github.com/mjm/pi-tools/apps/promtail"
+	"github.com/mjm/pi-tools/apps/trippliteexporter"
 	"github.com/mjm/pi-tools/apps/unifiexporter"
 	"github.com/mjm/pi-tools/pkg/nomadic"
 )
@@ -30,5 +31,6 @@ func Load() {
 	nomadic.Register(otel.New("otel"))
 	nomadic.Register(presence.New("presence", "beacon"))
 	nomadic.Register(promtail.New("promtail"))
+	nomadic.Register(trippliteexporter.New("tripplite-exporter"))
 	nomadic.Register(unifiexporter.New("unifi-exporter"))
 }
