@@ -23,6 +23,7 @@ go_library(
         "//apps/pushgateway",
         "//apps/trippliteexporter",
         "//apps/unifiexporter",
+        "//apps/vaultproxy",
         "//pkg/nomadic",
     ],
 )

@@ -18,6 +18,7 @@ import (
 	"github.com/mjm/pi-tools/apps/pushgateway"
 	"github.com/mjm/pi-tools/apps/trippliteexporter"
 	"github.com/mjm/pi-tools/apps/unifiexporter"
+	"github.com/mjm/pi-tools/apps/vaultproxy"
 	"github.com/mjm/pi-tools/pkg/nomadic"
 )
 
@@ -39,4 +40,5 @@ func Load() {
 	nomadic.Register(pushgateway.New("pushgateway"))
 	nomadic.Register(trippliteexporter.New("tripplite-exporter"))
 	nomadic.Register(unifiexporter.New("unifi-exporter"))
+	nomadic.Register(vaultproxy.New("vault-proxy"))
 }

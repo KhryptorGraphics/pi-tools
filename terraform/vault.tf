@@ -217,8 +217,3 @@ resource "vault_policy" "prometheus" {
   name   = "prometheus"
   policy = file("${local.vault_policies_path}/prometheus.hcl")
 }
-
-resource "vault_policy" "vault_proxy" {
-  name   = "vault-proxy"
-  policy = file("${local.vault_policies_path}/vault-proxy.hcl")
-}
