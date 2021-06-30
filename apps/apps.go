@@ -10,6 +10,7 @@ import (
 	"github.com/mjm/pi-tools/apps/homebase"
 	"github.com/mjm/pi-tools/apps/ingress"
 	"github.com/mjm/pi-tools/apps/loki"
+	"github.com/mjm/pi-tools/apps/nodeexporter"
 	"github.com/mjm/pi-tools/apps/otel"
 	"github.com/mjm/pi-tools/apps/presence"
 	"github.com/mjm/pi-tools/apps/promtail"
@@ -28,6 +29,7 @@ func Load() {
 	nomadic.Register(homebase.New("homebase"))
 	nomadic.Register(ingress.New("ingress"))
 	nomadic.Register(loki.New("loki"))
+	nomadic.Register(nodeexporter.New("node-exporter"))
 	nomadic.Register(otel.New("otel"))
 	nomadic.Register(presence.New("presence", "beacon"))
 	nomadic.Register(promtail.New("promtail"))

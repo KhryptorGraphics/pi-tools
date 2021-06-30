@@ -15,6 +15,7 @@ go_library(
         "//apps/homebase",
         "//apps/ingress",
         "//apps/loki",
+        "//apps/nodeexporter",
         "//apps/otel",
         "//apps/presence",
         "//apps/promtail",
