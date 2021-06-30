@@ -4,7 +4,9 @@ go_library(
     name = "backup",
     srcs = [
         "backup_app.go",
+        "borg.go",
         "databases.go",
+        "tarsnap.go",
         "templates.go",
     ],
     embedsrcs = [

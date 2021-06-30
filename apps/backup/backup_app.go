@@ -60,9 +60,10 @@ func (a *App) Install(ctx context.Context, clients nomadic.Clients) error {
 
 	borgJob := a.createBorgJob()
 	tarsnapJob := a.createTarsnapJob()
+	tarsnapDeleteJob := a.createTarsnapDeleteJob()
 	serviceJob := a.createServiceJob()
 
-	return clients.DeployJobs(ctx, borgJob, tarsnapJob, serviceJob)
+	return clients.DeployJobs(ctx, borgJob, tarsnapJob, tarsnapDeleteJob, serviceJob)
 }
 
 func (a *App) Uninstall(ctx context.Context, clients nomadic.Clients) error {
@@ -159,163 +160,6 @@ func (a *App) installConfigEntries(ctx context.Context, clients nomadic.Clients)
 	}
 
 	return nil
-}
-
-func (a *App) createBorgJob() *nomadapi.Job {
-	job := nomadic.NewBatchJob(a.borgName(), 70)
-	job.AddPeriodicConfig(&nomadapi.PeriodicConfig{
-		Spec:            nomadic.String("30 */4 * * *"),
-		ProhibitOverlap: nomadic.Bool(true),
-	})
-	tg := nomadic.AddTaskGroup(job, "backup", 1)
-
-	a.addCommonTasks(job, tg)
-
-	nomadic.AddTask(tg, &nomadapi.Task{
-		Name: "backup",
-		Config: map[string]interface{}{
-			"image":   nomadic.Image(backupImageRepo, "latest"),
-			"command": "/usr/bin/perform-backup",
-			"args": []string{
-				"-kind",
-				"borg",
-			},
-		},
-		Env: map[string]string{
-			"BORG_RSH": "ssh -o StrictHostKeyChecking=no -i ${NOMAD_SECRETS_DIR}/id_rsa",
-		},
-		Templates: []*nomadapi.Template{
-			{
-				EmbeddedTmpl: nomadic.String(`PUSHGATEWAY_URL={{ with service "pushgateway" }}{{ with index . 0 }}http://{{ .Address }}:{{ .Port }}{{ end }}{{ end }}`),
-				DestPath:     nomadic.String("local/backup.env"),
-				Envvars:      nomadic.Bool(true),
-			},
-			borgSSHKeyTemplate,
-		},
-	},
-		nomadic.WithCPU(100),
-		nomadic.WithMemoryMB(100),
-		nomadic.WithLoggingTag(a.borgName()),
-		nomadic.WithVaultPolicies(a.borgName()))
-
-	return job
-}
-
-func (a *App) createTarsnapJob() *nomadapi.Job {
-	job := nomadic.NewBatchJob(a.tarsnapName(), 70)
-	job.AddPeriodicConfig(&nomadapi.PeriodicConfig{
-		Spec:            nomadic.String("0 12 * * *"),
-		ProhibitOverlap: nomadic.Bool(true),
-	})
-	tg := nomadic.AddTaskGroup(job, "backup", 1)
-
-	// only run tarsnap job on this node because it has the tarsnap cache
-	// TODO make the tarsnap cache into a host volume and mount it that way
-	tg.Constrain(&nomadapi.Constraint{
-		LTarget: "${node.unique.name}",
-		Operand: "=",
-		RTarget: "raspberrypi",
-	})
-
-	a.addCommonTasks(job, tg)
-
-	mysqlDumpArgs := append([]string{
-		"mysqldump",
-		"--defaults-file=${NOMAD_SECRETS_DIR}/my.cnf",
-		"--result-file=${NOMAD_ALLOC_DIR}/data/phabricator.sql",
-		"--databases",
-	}, phabricatorDatabases...)
-
-	nomadic.AddTask(tg, &nomadapi.Task{
-		Name: "dump-phabricator-dbs",
-		Lifecycle: &nomadapi.TaskLifecycle{
-			Hook: nomadapi.TaskLifecycleHookPrestart,
-		},
-		Config: map[string]interface{}{
-			"image": nomadic.Image(mysqlImageRepo, mysqlImageVersion),
-			"args":  mysqlDumpArgs,
-		},
-		Templates: []*nomadapi.Template{
-			{
-				EmbeddedTmpl: nomadic.String(`
-[client]
-host = mysql.service.consul
-{{ with secret "database/creds/phabricator" -}}
-user = {{ .Data.username }}
-password = {{ .Data.password }}
-{{- end }}
-`),
-				DestPath: nomadic.String("secrets/my.cnf"),
-			},
-		},
-	},
-		nomadic.WithCPU(200),
-		nomadic.WithMemoryMB(500),
-		nomadic.WithLoggingTag(a.tarsnapName()),
-		nomadic.WithVaultPolicies("phabricator"))
-
-	nomadic.AddTask(tg, &nomadapi.Task{
-		Name: "backup",
-		Config: map[string]interface{}{
-			"image":   nomadic.Image(backupImageRepo, "latest"),
-			"command": "/usr/bin/perform-backup",
-			"args": []string{
-				"-kind",
-				"tarsnap",
-			},
-			"mount": []map[string]interface{}{
-				{
-					"type":   "bind",
-					"target": "/var/lib/tarsnap/cache",
-					"source": "/var/lib/tarsnap/cache",
-				},
-			},
-		},
-		Templates: []*nomadapi.Template{
-			{
-				EmbeddedTmpl: nomadic.String(`PUSHGATEWAY_URL={{ with service "pushgateway" }}{{ with index . 0 }}http://{{ .Address }}:{{ .Port }}{{ end }}{{ end }}`),
-				DestPath:     nomadic.String("local/backup.env"),
-				Envvars:      nomadic.Bool(true),
-			},
-			tarsnapKeyTemplate,
-		},
-	},
-		nomadic.WithCPU(100),
-		nomadic.WithMemoryMB(100),
-		nomadic.WithLoggingTag(a.tarsnapName()),
-		nomadic.WithVaultPolicies(a.tarsnapName()))
-
-	nomadic.AddTask(tg, &nomadapi.Task{
-		Name: "prune",
-		Lifecycle: &nomadapi.TaskLifecycle{
-			Hook: nomadapi.TaskLifecycleHookPoststop,
-		},
-		Config: map[string]interface{}{
-			"image":   nomadic.Image(backupImageRepo, "latest"),
-			"command": "${NOMAD_TASK_DIR}/prune.sh",
-			"mount": []map[string]interface{}{
-				{
-					"type":   "bind",
-					"target": "/var/lib/tarsnap/cache",
-					"source": "/var/lib/tarsnap/cache",
-				},
-			},
-		},
-		Templates: []*nomadapi.Template{
-			tarsnapKeyTemplate,
-			{
-				EmbeddedTmpl: &pruneScript,
-				DestPath:     nomadic.String("local/prune.sh"),
-				Perms:        nomadic.String("0755"),
-			},
-		},
-	},
-		nomadic.WithCPU(200),
-		nomadic.WithMemoryMB(30),
-		nomadic.WithLoggingTag(a.tarsnapName()),
-		nomadic.WithVaultPolicies(a.tarsnapName()))
-
-	return job
 }
 
 func (a *App) createServiceJob() *nomadapi.Job {
@@ -438,22 +282,5 @@ PGPASSWORD={{ .Data.password | toJSON }}
 	}
 }
 
-func (a *App) borgName() string {
-	return a.name + "-borg"
-}
-
-func (a *App) tarsnapName() string {
-	return a.name + "-tarsnap"
-}
-
 //go:embed backup.hcl
 var backupPolicy string
-
-//go:embed borg.hcl
-var borgPolicy string
-
-//go:embed tarsnap.hcl
-var tarsnapPolicy string
-
-//go:embed prune.sh
-var pruneScript string
